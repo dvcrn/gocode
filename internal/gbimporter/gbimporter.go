@@ -8,8 +8,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-
-	"github.com/mdempsky/gocode/internal/cache"
 )
 
 // We need to mangle go/build.Default to make gcimporter work as
@@ -19,15 +17,18 @@ var buildDefaultLock sync.Mutex
 // importer implements types.ImporterFrom and provides transparent
 // support for gb-based projects.
 type importer struct {
-	ctx     *cache.PackedContext
-	gbroot  string
-	gbpaths []string
+	underlying types.ImporterFrom
+	ctx        *PackedContext
+	gbroot     string
+	gbpaths    []string
 }
 
-func New(ctx *cache.PackedContext, filename string) types.ImporterFrom {
+func New(ctx *PackedContext, filename string, underlying types.ImporterFrom) types.ImporterFrom {
 	imp := &importer{
-		ctx: ctx,
+		ctx:        ctx,
+		underlying: underlying,
 	}
+
 	slashed := filepath.ToSlash(filename)
 	i := strings.LastIndex(slashed, "/vendor/src/")
 	if i < 0 {
@@ -38,11 +39,11 @@ func New(ctx *cache.PackedContext, filename string) types.ImporterFrom {
 
 		gbroot := filepath.FromSlash(slashed[:i])
 		gbvendor := filepath.Join(gbroot, "vendor")
-		if cache.SamePath(gbroot, imp.ctx.GOROOT) {
+		if samePath(gbroot, imp.ctx.GOROOT) {
 			goto Found
 		}
 		for _, path := range paths {
-			if cache.SamePath(path, gbroot) || cache.SamePath(path, gbvendor) {
+			if samePath(path, gbroot) || samePath(path, gbvendor) {
 				goto Found
 			}
 		}
@@ -81,7 +82,12 @@ func (i *importer) ImportFrom(path, srcDir string, mode types.ImportMode) (*type
 	def.SplitPathList = i.splitPathList
 	def.JoinPath = i.joinPath
 
-	return goimporter.For("source", nil).Import(path)
+	pkg, err := i.underlying.ImportFrom(path, srcDir, mode)
+	if pkg == nil {
+		// If importing fails, try importing with source importer.
+		pkg, _ = goimporter.For("source", nil).(types.ImporterFrom).ImportFrom(path, srcDir, mode)
+	}
+	return pkg, err
 }
 
 func (i *importer) splitPathList(list string) []string {

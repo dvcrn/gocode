@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"fmt"
+	"go/importer"
 	"go/types"
 	"log"
 	"net"
@@ -12,12 +13,12 @@ import (
 	"runtime/debug"
 	"time"
 
-	"github.com/mdempsky/gocode/internal/cache"
 	"github.com/mdempsky/gocode/internal/gbimporter"
 	"github.com/mdempsky/gocode/internal/suggest"
 )
 
 func doServer() {
+	fmt.Println("Server started")
 	addr := *g_addr
 	if *g_sock == "unix" {
 		addr = getSocketPath()
@@ -55,7 +56,7 @@ type AutoCompleteRequest struct {
 	Filename           string
 	Data               []byte
 	Cursor             int
-	Context            cache.PackedContext
+	Context            gbimporter.PackedContext
 	Source             bool
 	Builtin            bool
 	IgnoreCase         bool
@@ -91,18 +92,14 @@ func (s *Server) AutoComplete(req *AutoCompleteRequest, res *AutoCompleteReply) 
 		log.Println("-------------------------------------------------------")
 	}
 	now := time.Now()
-
-	var imp types.ImporterFrom
+	var underlying types.ImporterFrom
 	if req.Source {
-		imp = gbimporter.New(&req.Context, req.Filename)
+		underlying = importer.For("source", nil).(types.ImporterFrom)
 	} else {
-		cache.Mu.Lock()
-		defer cache.Mu.Unlock()
-		imp = cache.NewImporter(&req.Context, req.Filename, req.FallbackToSource)
+		underlying = importer.Default().(types.ImporterFrom)
 	}
-
 	cfg := suggest.Config{
-		Importer:           imp,
+		Importer:           gbimporter.New(&req.Context, req.Filename, underlying),
 		Builtin:            req.Builtin,
 		IgnoreCase:         req.IgnoreCase,
 		UnimportedPackages: req.UnimportedPackages,
